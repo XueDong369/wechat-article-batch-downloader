@@ -3,12 +3,13 @@ import UniformTypeIdentifiers
 struct ArticlesView: View {
  @ObservedObject var library: Library
  @ObservedObject var backend: Backend
+ private enum ImportKind {case links,bodies}
  @State private var showingImport = false
- @State private var showingBodyImport = false
+ @State private var importKind: ImportKind = .links
  var body: some View {
   VStack(alignment:.leading,spacing:0) {
    VStack(alignment:.leading,spacing:16) {
-    HStack{VStack(alignment:.leading,spacing:5){Text(library.account?.nickname ?? "公众号").font(.title2.weight(.semibold));Text(headerDetail).font(.callout).foregroundStyle(.secondary)};Spacer();Button("导入链接清单"){showingImport = true}.help("选择含微信文章长链接的 CSV 文件，归入当前公众号");Button("导入正文档案"){showingBodyImport = true}.help("选择带来源记录的 UTF-8 JSONL 正文档案");Button{Task{await library.refresh()}}label:{Image(systemName:"arrow.clockwise")}.help("刷新")}
+    HStack{VStack(alignment:.leading,spacing:5){Text(library.account?.nickname ?? "公众号").font(.title2.weight(.semibold));Text(headerDetail).font(.callout).foregroundStyle(.secondary)};Spacer();Button("导入链接清单"){importKind = .links;showingImport = true}.help("选择含微信文章长链接的 CSV 文件，归入当前公众号");Button("导入正文档案"){importKind = .bodies;showingImport = true}.help("选择带来源记录的 UTF-8 JSONL 正文档案");Button{Task{await library.refresh()}}label:{Image(systemName:"arrow.clockwise")}.help("刷新")}
     HStack(spacing:12) {
      Text("读取范围").font(.callout).foregroundStyle(.secondary)
      Picker("读取范围",selection:$library.options.mode){Text("最近文章").tag("recent");Text("全部历史").tag("all");Text("日期范围").tag("date")}.labelsHidden().pickerStyle(.segmented).frame(width:280)
@@ -65,16 +66,10 @@ struct ArticlesView: View {
     }
    }.padding(16)}
   }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top).navigationTitle(library.account?.nickname ?? "公众号")
-   .fileImporter(isPresented:$showingImport,allowedContentTypes:[.commaSeparatedText,.plainText]) {result in
+   .fileImporter(isPresented:$showingImport,allowedContentTypes:importKind == .links ? [.commaSeparatedText,.plainText] : [.item]) {result in
     switch result {
-    case .success(let url): library.importCSV(url)
-    case .failure(let error): library.message = "无法打开清单：\(error.localizedDescription)"
-    }
-   }
-   .fileImporter(isPresented:$showingBodyImport,allowedContentTypes:[.item]) {result in
-    switch result {
-    case .success(let url): library.importBodyJSONL(url)
-    case .failure(let error): library.message = "无法打开正文档案：\(error.localizedDescription)"
+    case .success(let url): if importKind == .links {library.importCSV(url)} else {library.importBodyJSONL(url)}
+    case .failure(let error): library.message = "无法打开导入文件：\(error.localizedDescription)"
     }
    }
  }
