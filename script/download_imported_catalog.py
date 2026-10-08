@@ -81,22 +81,58 @@ def pause_queued(batch_id):
         page += 1
 
 
+def resume_waiting(batch_id, limit=3):
+    """Nudge local tasks when the downloader has no active worker."""
+    resumed = 0
+    page = 1
+    while resumed < limit:
+        data = call(f"/api/task/list?page={page}&page_size=1000")
+        for task in data["list"]:
+            labels = ((task.get("meta") or {}).get("req") or {}).get("labels") or {}
+            if labels.get("batch_id") != batch_id or task.get("status") not in ("wait", "ready"):
+                continue
+            call("/api/task/resume", {"id": task["id"]})
+            resumed += 1
+            if resumed >= limit:
+                break
+        if page * 1000 >= data["total"]:
+            break
+        page += 1
+    return resumed
+
+
+def batch_errors(batch_id):
+    errors = []
+    page = 1
+    while True:
+        data = call(f"/api/task/list?page={page}&page_size=1000")
+        for task in data["list"]:
+            labels = ((task.get("meta") or {}).get("req") or {}).get("labels") or {}
+            if labels.get("batch_id") == batch_id and task.get("error"):
+                errors.append(task["error"])
+        if page * 1000 >= data["total"]:
+            return errors
+        page += 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("catalog", type=Path, help="app imports/<hash>.json file")
     parser.add_argument("--biz", required=True, help="expected account __biz")
     parser.add_argument("--batch-size", type=int, default=20)
+    parser.add_argument("--start", type=int, default=0, help="zero-based first catalog row to process")
     parser.add_argument("--limit", type=int, default=0, help="0 means entire catalog")
+    parser.add_argument("--skip-deleted", action="store_true", help="record and continue past publisher-deleted articles")
+    parser.add_argument("--skip-unparsed", action="store_true", help="record one isolated article-page parse failure per batch")
     args = parser.parse_args()
-    if not 1 <= args.batch_size <= 50 or args.limit < 0:
-        parser.error("batch size must be 1..50 and limit must be nonnegative")
+    if not 1 <= args.batch_size <= 50 or args.limit < 0 or args.start < 0:
+        parser.error("batch size must be 1..50; start and limit must be nonnegative")
     catalog = json.loads(args.catalog.read_text(encoding="utf-8"))
     articles = list(validated_articles(catalog, args.biz))
-    if args.limit:
-        articles = articles[:args.limit]
+    articles = articles[args.start : args.limit or None]
     account = catalog["accountName"]
     print(f"catalog={len(articles)} account={account} batch_size={args.batch_size}", flush=True)
-    totals = {"created": 0, "skipped": 0, "failed": 0, "completed": 0}
+    totals = {"created": 0, "skipped": 0, "failed": 0, "completed": 0, "deleted": 0, "unparsed": 0}
     for start in range(0, len(articles), args.batch_size):
         chunk = articles[start : start + args.batch_size]
         batch_id = "local-safe-" + uuid.uuid4().hex[:16]
@@ -131,10 +167,38 @@ def main():
         if not queued["created"]:
             continue
         deadline = time.monotonic() + 900
+        reported_kick = False
         while True:
             status = batch_status(batch_id)
             if status:
                 if status["failed"] or status["missing"] or status["paused"]:
+                    if status["failed"] and not status["missing"] and not status["paused"]:
+                        errors = batch_errors(batch_id)
+                        deleted = sum("文章已被发布者删除" in error for error in errors)
+                        unparsed = sum("cgiDataNew script not found" in error for error in errors)
+                        allowed = (
+                            len(errors) == status["failed"]
+                            and deleted + unparsed == len(errors)
+                            and (deleted == 0 or args.skip_deleted)
+                            and (unparsed == 0 or args.skip_unparsed)
+                            and unparsed <= 1
+                        )
+                        if allowed:
+                            if status["running"] or status["queued"]:
+                                if status["running"] == 0 and status["queued"] > 0:
+                                    resume_waiting(batch_id)
+                                time.sleep(5)
+                                continue
+                            totals["completed"] += status["completed"]
+                            totals["deleted"] += deleted
+                            totals["unparsed"] += unparsed
+                            print(
+                                f"completed={totals['completed']} newly downloaded; "
+                                f"publisher_deleted={totals['deleted']} "
+                                f"page_unparsed={totals['unparsed']}",
+                                flush=True,
+                            )
+                            break
                     pause_queued(batch_id)
                     raise RuntimeError(
                         f"batch stopped: completed={status['completed']} "
@@ -144,6 +208,11 @@ def main():
                     totals["completed"] += status["completed"]
                     print(f"completed={totals['completed']} newly downloaded in this run", flush=True)
                     break
+                if status["running"] == 0 and status["queued"] > 0:
+                    resumed = resume_waiting(batch_id)
+                    if resumed and not reported_kick:
+                        print("local queue was idle; resumed waiting tasks", flush=True)
+                        reported_kick = True
             if time.monotonic() >= deadline:
                 pause_queued(batch_id)
                 raise TimeoutError("batch exceeded 15 minutes; queued tasks were paused")
