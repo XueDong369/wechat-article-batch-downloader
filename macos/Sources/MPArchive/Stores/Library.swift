@@ -6,6 +6,7 @@ import Foundation
  @Published var selected: String? = "welcome"
  @Published var scan = Scan.empty
  @Published var imported = ImportedCatalog.empty
+ @Published var offlineBodies = OfflineBodyCatalog.empty
  @Published var tasks: [DownloadItem] = []
  @Published var taskTotal = 0
  @Published var taskPage = 1
@@ -26,6 +27,7 @@ import Foundation
  @Published var message = ""
  @Published var queueing = false
  @Published var scanBusy = false
+ @Published var bodyExportBusy = false
  @Published var downloadMode = UserDefaults.standard.string(forKey:"downloadMode") ?? "safe" {
   didSet {UserDefaults.standard.set(downloadMode,forKey:"downloadMode")}
  }
@@ -67,13 +69,14 @@ import Foundation
     if selected == biz {
      scan = state
      if imported.biz != biz {imported = ImportedCatalogStore.load(biz:biz)}
+     if offlineBodies.biz != biz {offlineBodies = OfflineBodyStore.load(biz:biz)}
     }
    }
    if selected == "downloads" {await refreshTasks();await refreshDownloadProgress();refreshDownloadFolders()}
   } catch {message = error.localizedDescription}
  }
  func selectionChanged() async {
-  scan = .empty;imported = .empty;selectedArticles = [];query = "";message = ""
+  scan = .empty;imported = .empty;offlineBodies = .empty;selectedArticles = [];query = "";message = ""
   await refresh()
   if let saved = scan.options,["recent","all","date"].contains(saved.mode) {options = saved}
   else {options = ScanOptions()}
@@ -96,6 +99,26 @@ import Foundation
    imported = catalog
    message = "已导入 \(added) 条新链接，当前保存 \(catalog.articles.count) 条。来源清单不代表公众号全部历史；下载前建议先选一篇测试。"
   } catch {message = "导入失败：\(error.localizedDescription)"}
+ }
+ func importBodyJSONL(_ url: URL) {
+  guard let account else {message = "请先选择目标公众号";return}
+  let access = url.startAccessingSecurityScopedResource()
+  defer {if access {url.stopAccessingSecurityScopedResource()}}
+  do {
+   let catalog = try OfflineBodyStore.ingest(Data(contentsOf:url),biz:account.biz,accountName:account.nickname)
+   offlineBodies = catalog
+   message = "已导入 \(catalog.bodies.count) 篇本地正文：微信读书 \(catalog.readerCount) 篇、官网同名参考 \(catalog.institutionCount) 篇。来源会写入导出文件。"
+  } catch {message = "正文档案导入失败：\(error.localizedDescription)"}
+ }
+ func exportOfflineBodies() async {
+  guard !bodyExportBusy,let root = downloadRoot,!offlineBodies.bodies.isEmpty else{return}
+  bodyExportBusy = true;defer{bodyExportBusy = false}
+  let catalog = offlineBodies
+  do {
+   let folder = try await Task.detached(priority:.userInitiated) {try OfflineBodyStore.export(catalog,to:root)}.value
+   message = "已导出 \(catalog.bodies.count) 篇带来源标记的本地正文"
+   NSWorkspace.shared.open(folder)
+  } catch {message = "导出失败：\(error.localizedDescription)"}
  }
  func enqueue(selectedOnly: Bool) async {
   guard let account, !queueing else{return}
