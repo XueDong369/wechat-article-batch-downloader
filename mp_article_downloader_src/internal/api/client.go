@@ -158,7 +158,7 @@ func (c *APIClient) Start() error {
 			return
 		}
 		c.recordTaskError(evt)
-		c.pauseFastBatchOnVerification(evt)
+		c.pauseBatchOnVerification(evt)
 		c.downloader_ws.Broadcast(APIClientWSMessage{
 			Type: "event",
 			Data: evt,

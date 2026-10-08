@@ -360,14 +360,14 @@ func (c *APIClient) recordTaskError(evt *downloadpkg.Event) {
 	}
 }
 
-func (c *APIClient) pauseFastBatchOnVerification(evt *downloadpkg.Event) {
-	batchID := fastBatchVerificationID(evt)
+func (c *APIClient) pauseBatchOnVerification(evt *downloadpkg.Event) {
+	batchID := batchVerificationID(evt)
 	if batchID == "" {
 		return
 	}
-	// Pause the rest of this fast batch after the first verification response.
+	// Pause the rest of this batch after the first verification response.
 	// Running exporters may still finish or fail, but queued articles are kept
-	// for a later safe-mode retry instead of producing hundreds of failures.
+	// for a later retry instead of producing hundreds of failures.
 	go func() {
 		ids := make([]string, 0)
 		for _, task := range c.downloader.GetTasks() {
@@ -384,13 +384,14 @@ func (c *APIClient) pauseFastBatchOnVerification(evt *downloadpkg.Event) {
 	}()
 }
 
-func fastBatchVerificationID(evt *downloadpkg.Event) string {
+func batchVerificationID(evt *downloadpkg.Event) string {
 	if evt == nil || evt.Key != downloadpkg.EventKeyError || evt.Task == nil || evt.Err == nil || evt.Task.Meta == nil || evt.Task.Meta.Req == nil {
 		return ""
 	}
 	labels := evt.Task.Meta.Req.Labels
 	message := evt.Err.Error()
-	if labels["download_mode"] != "fast" || (!strings.Contains(message, "访问验证") && !strings.Contains(message, "凭证已失效")) {
+	mode := labels["download_mode"]
+	if (mode != "fast" && mode != "safe") || (!strings.Contains(message, "访问验证") && !strings.Contains(message, "凭证已失效")) {
 		return ""
 	}
 	return labels["batch_id"]

@@ -232,18 +232,21 @@ func TestSummarizeDownloadBatchesKeepsRestoredFailure(t *testing.T) {
 	}
 }
 
-func TestFastBatchVerificationStopsRemainingQueue(t *testing.T) {
-	task := summaryTask(t, "/downloads/account", "error", time.Now(), map[string]string{"batch_id": "fast-batch", "download_mode": "fast"})
-	for _, message := range []string{"微信公众号凭证已失效或触发访问验证", "微信要求完成访问验证，请在微信中打开文章后重试"} {
-		event := &downloadpkg.Event{Key: downloadpkg.EventKeyError, Task: task, Err: errors.New(message)}
-		if got := fastBatchVerificationID(event); got != "fast-batch" {
-			t.Fatalf("got batch %q for %q", got, message)
+func TestBatchVerificationStopsRemainingQueue(t *testing.T) {
+	task := summaryTask(t, "/downloads/account", "error", time.Now(), map[string]string{"batch_id": "batch", "download_mode": "fast"})
+	for _, mode := range []string{"fast", "safe"} {
+		task.Meta.Req.Labels["download_mode"] = mode
+		for _, message := range []string{"微信公众号凭证已失效或触发访问验证", "微信要求完成访问验证，请在微信中打开文章后重试"} {
+			event := &downloadpkg.Event{Key: downloadpkg.EventKeyError, Task: task, Err: errors.New(message)}
+			if got := batchVerificationID(event); got != "batch" {
+				t.Fatalf("got batch %q for mode=%s message=%q", got, mode, message)
+			}
 		}
 	}
-	task.Meta.Req.Labels["download_mode"] = "safe"
+	task.Meta.Req.Labels["download_mode"] = "unknown"
 	event := &downloadpkg.Event{Key: downloadpkg.EventKeyError, Task: task, Err: errors.New("微信要求完成访问验证")}
-	if got := fastBatchVerificationID(event); got != "" {
-		t.Fatalf("safe batch should not trigger automatic pause: %q", got)
+	if got := batchVerificationID(event); got != "" {
+		t.Fatalf("unlabeled mode should not trigger automatic pause: %q", got)
 	}
 }
 

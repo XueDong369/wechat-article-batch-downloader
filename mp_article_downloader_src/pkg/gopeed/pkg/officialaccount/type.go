@@ -91,8 +91,8 @@ type VideoPageInfoItem struct {
 	MpVideoOverseasLimit int                `json:"mp_video_overseas_limit"`
 	IsMpVideoForbid      int                `json:"is_mp_video_forbid"`
 	MpVideoForbidReason  int                `json:"mp_video_forbid_reason"`
-	HitUsername          int                `json:"hit_username"`
-	HitBizuin            int                `json:"hit_bizuin"`
+	HitUsername          any                `json:"hit_username"`
+	HitBizuin            any                `json:"hit_bizuin"`
 	HitVid               string             `json:"hit_vid"`
 	ContentNoencode      string             `json:"content_noencode"`
 	IsMpVideoUrgentState int                `json:"is_mp_video_urgent_state"`
@@ -101,7 +101,7 @@ type VideoPageInfoItem struct {
 	CoverUrl11           string             `json:"cover_url_1_1"`
 	CoverUrl169          string             `json:"cover_url_16_9"`
 	VideoidUploadtime    int                `json:"videoid_uploadtime"`
-	VideoidBizuin        int                `json:"videoid_bizuin"`
+	VideoidBizuin        any                `json:"videoid_bizuin"`
 	MpVideoTransInfo     []MpVideoTransInfo `json:"mp_video_trans_info"`
 }
 
