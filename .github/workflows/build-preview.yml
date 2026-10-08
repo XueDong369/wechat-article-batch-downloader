@@ -1,0 +1,31 @@
+name: Build macOS preview
+
+on:
+  push:
+    branches: [codex/app-import]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mp_article_downloader_src/go.mod
+      - name: Build app
+        env:
+          DOWNLOAD_GOPROXY: https://proxy.golang.org,direct
+        run: ./script/build_and_run.sh --build-only
+      - name: Test native importer
+        run: swift test --package-path macos
+      - name: Package app
+        run: ditto -c -k --sequesterRsrc --keepParent 'dist/公众号文章下载器.app' MPArticleDownloader-macOS-arm64-preview.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MPArticleDownloader-macOS-arm64-preview
+          path: MPArticleDownloader-macOS-arm64-preview.zip
+          if-no-files-found: error

@@ -5,6 +5,7 @@ import Foundation
  @Published var accounts: [Account] = []
  @Published var selected: String? = "welcome"
  @Published var scan = Scan.empty
+ @Published var imported = ImportedCatalog.empty
  @Published var tasks: [DownloadItem] = []
  @Published var taskTotal = 0
  @Published var taskPage = 1
@@ -35,7 +36,11 @@ import Foundation
  private var lastFolderRefresh = Date.distantPast
  let api = API()
  var account: Account? {accounts.first{$0.biz == selected}}
- var visibleArticles: [Article] {query.isEmpty ? scan.articles : scan.articles.filter{$0.title.localizedCaseInsensitiveContains(query) || $0.digest.localizedCaseInsensitiveContains(query)}}
+ var availableArticles: [Article] {
+  var seen = Set<String>()
+  return (scan.articles + imported.articles).filter{seen.insert($0.id).inserted}
+ }
+ var visibleArticles: [Article] {query.isEmpty ? availableArticles : availableArticles.filter{$0.title.localizedCaseInsensitiveContains(query) || $0.digest.localizedCaseInsensitiveContains(query)}}
  func begin(_ backend: Backend) {
   downloadRoot = backend.downloads
   guard pollTask == nil else{return}
@@ -57,12 +62,18 @@ import Foundation
     let page: AccountPage = try await api.call("/api/mp/list?page_size=200")
     accounts = (page.list ?? []).sorted{$0.nickname.localizedStandardCompare($1.nickname) == .orderedAscending}
    }
-   if let biz = account?.biz {let state: Scan = try await api.call("/api/desktop/scan?biz=" + API.query(biz));if selected == biz {scan = state}}
+   if let biz = account?.biz {
+    let state: Scan = try await api.call("/api/desktop/scan?biz=" + API.query(biz))
+    if selected == biz {
+     scan = state
+     if imported.biz != biz {imported = ImportedCatalogStore.load(biz:biz)}
+    }
+   }
    if selected == "downloads" {await refreshTasks();await refreshDownloadProgress();refreshDownloadFolders()}
   } catch {message = error.localizedDescription}
  }
  func selectionChanged() async {
-  scan = .empty;selectedArticles = [];query = "";message = ""
+  scan = .empty;imported = .empty;selectedArticles = [];query = "";message = ""
   await refresh()
   if let saved = scan.options,["recent","all","date"].contains(saved.mode) {options = saved}
   else {options = ScanOptions()}
@@ -76,16 +87,27 @@ import Foundation
   catch {message = error.localizedDescription}
  }
  func pauseScan() async {guard let account else{return};do {try await api.post("/api/desktop/scan/pause",["biz":account.biz]);message = "正在保存断点并暂停…"}catch{message = error.localizedDescription}}
+ func importCSV(_ url: URL) {
+  guard let account else {message = "请先选择目标公众号";return}
+  let access = url.startAccessingSecurityScopedResource()
+  defer {if access {url.stopAccessingSecurityScopedResource()}}
+  do {
+   let (catalog,added) = try ImportedCatalogStore.ingest(Data(contentsOf:url),biz:account.biz,accountName:account.nickname)
+   imported = catalog
+   message = "已导入 \(added) 条新链接，当前保存 \(catalog.articles.count) 条。来源清单不代表公众号全部历史；下载前建议先选一篇测试。"
+  } catch {message = "导入失败：\(error.localizedDescription)"}
+ }
  func enqueue(selectedOnly: Bool) async {
   guard let account, !queueing else{return}
-  let articles = selectedOnly ? scan.articles.filter{selectedArticles.contains($0.id)} : scan.articles
+  let articles = selectedOnly ? availableArticles.filter{selectedArticles.contains($0.id)} : availableArticles
   guard !articles.isEmpty else{return}
   queueing = true;cancelQueue = false;defer{queueing = false}
-  let oldest = articles.min{$0.published < $1.published}!
+  let sample = articles.first(where:{$0.digest.contains("微信读书")}) ?? articles[0]
   message = "正在检查历史文章访问权限…"
   do {
    struct ProbeRequest: Encodable {let URL:String}
-   let _:ArticleProbe = try await api.call("/api/mp/article/probe",body:JSONEncoder().encode(ProbeRequest(URL:oldest.url)))
+   let probe:ArticleProbe = try await api.call("/api/mp/article/probe",body:JSONEncoder().encode(ProbeRequest(URL:sample.url)))
+   guard probe.mode == "full" else {message = "尚未开始下载：测试文章仅返回预览内容";return}
   } catch {
    message = "尚未开始下载：\(error.localizedDescription)"
    return

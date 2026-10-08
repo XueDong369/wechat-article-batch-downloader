@@ -77,6 +77,38 @@ func TestPartialFailureResumesPersistedOffset(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+func TestCategorizedFailurePausesWithoutLeakingCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want string
+	}{
+		{"credential", "凭证失效"},
+		{"verification", "访问受限"},
+		{"author", "作者历史列表"},
+		{"other", "暂时没有返回完整列表"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			secret := "https://mp.weixin.qq.com/s?key=TOPSECRET&pass_ticket=TOPSECRET"
+			issue := &FetchIssue{Kind: tc.kind, Stage: "legacy", Cause: errors.New(secret)}
+			m := New(t.TempDir(), func(string, int) (Page, error) { return Page{}, issue })
+			if err := m.Start(Options{Biz: "test-account", Mode: "all"}); err != nil {
+				t.Fatal(err)
+			}
+			s := awaitStatus(t, m, "test-account", "paused")
+			if len(s.Articles) != 0 || s.Offset != 0 || !strings.Contains(s.Message, tc.want) {
+				t.Fatalf("wrong paused scan: %+v", s)
+			}
+			if strings.Contains(s.Message, "TOPSECRET") || strings.Contains(issue.Error(), "TOPSECRET") {
+				t.Fatal("credential leaked to UI or log")
+			}
+			b, err := os.ReadFile(filepath.Join(m.dir, ID("test-account")+".json"))
+			if err != nil || strings.Contains(string(b), "TOPSECRET") {
+				t.Fatal("credential leaked to persisted scan", err)
+			}
+		})
+	}
+}
+
 func TestDateRangeAndRecentLimit(t *testing.T) {
 	for _, mode := range []string{"date", "recent"} {
 		m := New(t.TempDir(), func(string, int) (Page, error) {

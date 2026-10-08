@@ -224,6 +224,25 @@ func parseAuthorHistory(history *officialaccount.ArticleHistoryResponse) (archiv
 	return page, nil
 }
 
+func classifyArchiveFetchError(err error, stage string) error {
+	if err == nil {
+		return nil
+	}
+	kind := "other"
+	if stage == "author" {
+		kind = "author"
+	}
+	if code, ok := officialaccount.ErrorCode(err); ok {
+		switch code {
+		case result.CodeAccountExpired:
+			kind = "credential"
+		case result.CodeAccountBanned:
+			kind = "verification"
+		}
+	}
+	return &archive.FetchIssue{Kind: kind, Stage: stage, Cause: err}
+}
+
 func fetchDesktopArchivePage(
 	fetchLegacy func(string, int) (*officialaccount.OfficialMsgListResp, error),
 	fetchAuthor func(string) (*officialaccount.ArticleHistoryResponse, error),
@@ -231,18 +250,23 @@ func fetchDesktopArchivePage(
 	offset int,
 ) (archive.Page, error) {
 	page, err := fetchArchivePage(fetchLegacy, biz, offset)
-	if err != nil || offset != 0 || page.More || len(page.Articles) != 0 {
-		return page, err
+	if err != nil {
+		// A failed request is not a confirmed empty page; never silently bypass
+		// credential expiry, verification, or a malformed response.
+		return page, classifyArchiveFetchError(err, "legacy")
+	}
+	if offset != 0 || page.More || len(page.Articles) != 0 {
+		return page, nil
 	}
 	history, err := fetchAuthor(biz)
 	if err != nil {
-		return archive.Page{}, err
+		return archive.Page{}, classifyArchiveFetchError(err, "author")
 	}
 	page, err = parseAuthorHistory(history)
 	if err == nil && len(page.Articles) == 0 {
 		err = fmt.Errorf("微信没有返回可归档的历史文章")
 	}
-	return page, err
+	return page, classifyArchiveFetchError(err, "author")
 }
 
 func (c *APIClient) setupDesktop() {

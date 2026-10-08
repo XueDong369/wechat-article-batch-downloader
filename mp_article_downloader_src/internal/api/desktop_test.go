@@ -79,6 +79,37 @@ func TestDesktopArchiveFallsBackToAuthorCursorHistory(t *testing.T) {
 	}
 }
 
+func TestDesktopArchiveNeverFallsBackOnLegacyFailure(t *testing.T) {
+	failure := errors.New("opaque request failure")
+	authorCalls := 0
+	_, err := fetchDesktopArchivePage(
+		func(string, int) (*officialaccount.OfficialMsgListResp, error) { return nil, failure },
+		func(string) (*officialaccount.ArticleHistoryResponse, error) {
+			authorCalls++
+			return &officialaccount.ArticleHistoryResponse{}, nil
+		}, "x", 0,
+	)
+	var issue *archive.FetchIssue
+	if !errors.As(err, &issue) || issue.Stage != "legacy" || issue.Kind != "other" || !errors.Is(err, failure) || authorCalls != 0 {
+		t.Fatalf("legacy error was bypassed: issue=%+v author_calls=%d", issue, authorCalls)
+	}
+}
+
+func TestDesktopArchiveAuthorFailureIsNotEmptySuccess(t *testing.T) {
+	_, err := fetchDesktopArchivePage(
+		func(string, int) (*officialaccount.OfficialMsgListResp, error) {
+			return &officialaccount.OfficialMsgListResp{}, nil
+		},
+		func(string) (*officialaccount.ArticleHistoryResponse, error) {
+			return nil, errors.New("author rejected request")
+		}, "x", 0,
+	)
+	var issue *archive.FetchIssue
+	if !errors.As(err, &issue) || issue.Stage != "author" || issue.Kind != "author" {
+		t.Fatalf("author error was accepted: %v", err)
+	}
+}
+
 func TestDesktopArchiveDoesNotAcceptTwoEmptySources(t *testing.T) {
 	_, err := fetchDesktopArchivePage(
 		func(string, int) (*officialaccount.OfficialMsgListResp, error) {

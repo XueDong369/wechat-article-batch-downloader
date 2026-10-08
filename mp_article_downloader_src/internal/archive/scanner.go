@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/url"
@@ -46,6 +47,34 @@ type Page struct {
 	ReadPages int
 }
 type Fetch func(string, int) (Page, error)
+
+// FetchIssue carries only a safe failure category across the API and scan layers.
+// Its cause is retained for errors.Is/As, but Error never exposes credentials or URLs.
+type FetchIssue struct {
+	Kind  string
+	Stage string
+	Cause error
+}
+
+func (e *FetchIssue) Error() string { return "archive fetch failed: " + e.Kind }
+func (e *FetchIssue) Unwrap() error { return e.Cause }
+
+func pauseMessage(err error, saved int) string {
+	prefix := fmt.Sprintf("已保存 %d 篇文章和读取进度。", saved)
+	var issue *FetchIssue
+	if errors.As(err, &issue) {
+		switch issue.Kind {
+		case "credential":
+			return prefix + "本次历史列表请求被判为凭证失效；左侧显示公众号不代表读取权限有效。请在正常微信环境中确认连接更新后，再手动继续读取。"
+		case "verification":
+			return prefix + "微信提示访问受限或需要验证；请按微信正常提示处理，停止连续重试。"
+		case "author":
+			return prefix + "旧列表没有文章，作者历史列表也未返回可用结果；不能将 0 篇视为已读完。"
+		}
+	}
+	return prefix + "微信暂时没有返回完整列表；请稍后检查连接状态再继续读取。"
+}
+
 type Manager struct {
 	mu    sync.Mutex
 	scans map[string]*Scan
@@ -191,7 +220,7 @@ func (m *Manager) run(s *Scan, stop chan struct{}) {
 		}
 		p, err := m.fetch(s.Options.Biz, s.Offset)
 		if err != nil {
-			finish("paused", fmt.Sprintf("已保存 %d 篇文章和读取进度。微信暂时没有返回完整列表，请在微信重新打开文章后继续读取。", len(s.Articles)))
+			finish("paused", pauseMessage(err, len(s.Articles)))
 			return
 		}
 		select {

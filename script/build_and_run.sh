@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 MODE="${1:-run}"
-export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+export DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUNDLE="$PROJECT_DIR/dist/公众号文章下载器.app"
 if [[ "$MODE" != "--build-only" ]] && pgrep -x MPArchive >/dev/null; then

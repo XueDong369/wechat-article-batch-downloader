@@ -2124,6 +2124,12 @@ func codedErrorOf(err error) (int, string, string, bool) {
 	return 0, "", "", false
 }
 
+// ErrorCode exposes only the error category to the local archive scanner.
+func ErrorCode(err error) (int, bool) {
+	code, _, _, ok := codedErrorOf(err)
+	return code, ok
+}
+
 func safeLogErr(err error) string {
 	if err == nil {
 		return ""
@@ -2421,7 +2427,6 @@ func (c *OfficialAccountClient) fetchMsgList(logger zerolog.Logger, biz string, 
 	referer := "https://mp.weixin.qq.com/mp/profile_ext?" + params.Encode()
 	resp, err := c.Fetch(target_url, referer)
 	if err != nil {
-		fmt.Printf("c.Fetch msg list: error: %s\n", err.Error())
 		code := result.CodeFetchMsgFailed
 		msg := result.GetMsg(code)
 		reason := safeNetReason(err)
@@ -2448,7 +2453,6 @@ func (c *OfficialAccountClient) fetchMsgList(logger zerolog.Logger, biz string, 
 		return nil, newCodedError(result.CodeDataParseFailed, result.GetMsg(result.CodeDataParseFailed), err)
 	}
 	if data.Ret != 0 {
-		fmt.Printf("data.Ret != 0 msg list: error: %s\n", string(resp_bytes))
 		if data.Ret == -3 {
 			existing.IsEffective = false
 			save_accounts()
